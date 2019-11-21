@@ -13,6 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include_directories ("${PROJECT_SOURCE_DIR}/include")
 
 # Glog
+# On macOS / brew install glog
 find_package(Glog REQUIRED)
 include_directories(${Glog_INCLUDE_PATH})
 
@@ -27,6 +28,7 @@ find_package(OpenSSL REQUIRED)
 include_directories(${OPENSSL_INCLUDE_DIR})
 
 # Hiredis
+# On macOS / brew install hiredis
 find_path(HIREDIS_HEADER hiredis)
 include_directories(${HIREDIS_HEADER})
 

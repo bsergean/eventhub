@@ -36,7 +36,11 @@ public:
 private:
   unsigned int _workerId;
   Server* _server;
+#ifndef __APPLE__
   int _epoll_fd;
+#else
+  std::shared_ptr<EventWatcher> _event_watcher;
+#endif
   EventLoop _ev;
   ConnectionList _connection_list;
   std::mutex _connection_list_mutex;

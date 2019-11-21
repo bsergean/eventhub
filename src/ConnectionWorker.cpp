@@ -33,14 +33,14 @@ namespace eventhub {
 
 Worker::Worker(Server* srv, unsigned int workerId) : _workerId(workerId) {
   _server   = srv;
+#ifndef __APPLE__
   _epoll_fd = epoll_create1(0);
+#else
+  _event_watcher = createEventWatcher();
+#endif
 }
 
 Worker::~Worker() {
-  if (_epoll_fd != -1) {
-    close(_epoll_fd);
-  }
-
   _connection_list_mutex.lock();
 
   for (auto it = _connection_list.begin(); it != _connection_list.end();) {
