@@ -5,6 +5,9 @@
 #include <poll.h>
 #include <stdio.h>
 #include <sys/select.h>
+#include <sys/types.h>
+#include <sys/event.h>
+#include <sys/time.h>
 #include <map>
 #include <mutex>
 
@@ -24,6 +27,10 @@ int epoll_ctl(int epfd, int op, int fd,
   std::lock_guard<std::mutex> lock(mutex);
 
   if (op == EPOLL_CTL_DEL) {
+    auto it = _events.find(fd);
+    if (it == _events.end()) {
+        return -1;
+    }
     _events.erase(fd);
   } else {
     _events[fd] = event;
@@ -190,10 +197,119 @@ int epoll_wait_poll(int epfd, struct epoll_event *events,
   return retval;
 }
 
+int epoll_wait_kqueue(int epfd, struct epoll_event *events,
+                      int maxevents, int timeout) {
+  int kqfd = kqueue();
+
+  int setsize;
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    setsize = _events.size();
+  }
+
+  struct kevent kevents[setsize];
+
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    int i = 0;
+    for (auto it : _events) {
+      auto fd = it.first;
+      auto ev = it.second;
+
+      struct kevent ke = kevents[i];
+
+      if (ev->events & EPOLLIN) {
+        EV_SET(&ke, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+        kevent(kqfd, &ke, 1, NULL, 0, NULL);
+      }
+
+      if (ev->events & EPOLLOUT) {
+        EV_SET(&ke, fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+        kevent(kqfd, &ke, 1, NULL, 0, NULL);
+      }
+
+      // if (ev->events & EPOLLIN) {
+      //   fds[i].events |= POLLIN;
+      // }
+      // if (ev->events & EPOLLOUT) {
+      //   fds[i].events |= POLLOUT;
+      // }
+      // if (ev->events & EPOLLERR) {
+      //   fds[i].events |= POLLERR;
+      // }
+      // if (ev->events & EPOLLRDHUP || ev->events & EPOLLHUP) {
+      //   fds[i].events |= POLLHUP;
+      // }
+
+      i++;
+    }
+  }
+
+  int retval;
+  if (timeout != -1) {
+      struct timespec tv;
+      tv.tv_sec = timeout / 1000;
+      tv.tv_nsec = (timeout % 1000) * 1000 * 1000;
+      retval = kevent(kqfd, NULL, 0, kevents, setsize,
+                      &tv);
+  } else {
+      retval = kevent(kqfd, NULL, 0, kevents, setsize,
+                      NULL);
+  }
+
+  // if (retval < 0) {
+  //   perror("kqueue error ");
+  // }
+
+  if (retval > 0) {
+    int i = 0;
+    for (int j = 0; j <= retval; j++) {
+      bool pollIn  = kevents[j].filter == EVFILT_READ;
+      bool pollOut = kevents[j].filter == EVFILT_WRITE;
+
+      bool pollHup = kevents[j].flags & EV_EOF;
+      bool pollErr = kevents[j].flags & EV_EOF;
+
+      if (pollIn || pollOut || pollHup) {
+
+        int fd = kevents[j].ident;
+
+        std::lock_guard<std::mutex> lock(mutex);
+        auto it = _events.find(fd);
+        if (it != _events.end()) {
+          struct epoll_event *e = it->second;
+
+          events[i].events = 0;
+
+          if (pollIn) {
+            events[i].events |= EPOLLIN;
+          }
+          if (pollOut) {
+            events[i].events |= EPOLLOUT;
+          }
+          if (pollErr) {
+            events[i].events |= EPOLLERR;
+          }
+          if (pollHup) {
+            events[i].events |= EPOLLHUP;
+          }
+
+          events[i].data.fd = fd;
+          events[i].data.ptr = e->data.ptr;
+
+          i++;
+        }
+      }
+    }
+  }
+
+  return retval;
+}
+
 int epoll_wait(int epfd, struct epoll_event *events,
-               int maxevents, int timeout)
-{
-    return epoll_wait_select(epfd, events, maxevents, timeout);
+               int maxevents, int timeout) {
+    // return epoll_wait_poll(epfd, events, maxevents, timeout);
+    return epoll_wait_kqueue(epfd, events, maxevents, timeout);
 }
 
 #endif
